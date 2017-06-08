@@ -19,7 +19,6 @@
 #include "ble/BLE.h"
 #include "ble/Gap.h"
 #include "ble/services/HeartRateService.h"
-#include "ble/services/DFUService.h"
 #include "MAX30102.h"
 #include "MAX30205.h"
 #include "algorithm.h"
@@ -29,25 +28,37 @@
 #include "MAX14690.h"
 
 // Define hardware objects here
-//
-// Serial pc(USBTX, USBRX);
+
+// Uncomment this if not working with virtual serial port (more stable if this is commented OUT)
+#define DEBUG   1
+
+// DFU.  Must build with mbed-cli on the DFU branch
+#define DFU     1
+
+#if DFU
+#include "ble/services/DFUService.h"
+#endif
+
+#if DEBUG
+Serial pc(USBTX, USBRX);
+#endif
 
 DigitalOut  led1(LED1);
 DigitalOut  led2(LED2);
 DigitalOut  led3(LED3);
 DigitalOut  led4(LED4);
 
-InterruptIn INT(P0_26);		// SpO2 interrupt
+InterruptIn INT(P0_26);     // SpO2 interrupt
 
 MAX30205 temp_sensor(P0_27, P0_12, 0x90);
 
 // MAX17055    gauge(P0_27, P0_12);
 
-MAX14690	pm(P0_27, P0_12);
+// MAX14690 pm(P0_27, P0_12);
 
 static Timer    timer;
 
-const static char       DEVICE_NAME[] = "ESBSW1_008";
+const static char       DEVICE_NAME[] = "ESBSW1";
 static const uint16_t   uuid16_list[] = {GattService::UUID_HEART_RATE_SERVICE };
 static HeartRateService *hrServicePtr = NULL;
 
@@ -70,22 +81,26 @@ FilterData *hr_filter = new FilterData(10, 8, 1.5, 50, 50.0, 20.0, 5, 2.0);
 
 static void log_str(const char *str)
 {
-    // pc.printf(str);
+#if DEBUG
+    pc.printf(str);
+#endif
 }
 
 static void log_line(const char *str)
 {
-    // pc.printf("%s\r\n", str);
+#if DEBUG
+    pc.printf("%s\r\n", str);
+#endif
 }
 
 // flag 0: write as is, flag 1: append newline at the end
 static void vlog(int flag, const char * format, ... )
 {
+#ifndef _DEBUG
+    return;
+#endif
+
     if (flag < 0 || flag > 1) return;
-    
-    return;		//  Take this out if you still want pc output
-    
-    // if (!pc.writeable()) return;
     
     char buffer[256];
     va_list args;
@@ -166,7 +181,7 @@ static void bleInitComplete(BLE::InitializationCompleteCallbackContext *params)
 
     if (error != BLE_ERROR_NONE)
     {
-    	  led3 = !led3;
+        led3 = !led3;
         onBleInitError(ble, error);
         return;
     }
@@ -174,11 +189,11 @@ static void bleInitComplete(BLE::InitializationCompleteCallbackContext *params)
     if (ble.getInstanceID() != BLE::DEFAULT_INSTANCE)
     {
         vlog(1, "ble not default instance");
-          led3 = !led3;
+        led3 = !led3;
         return;
     }
 
-  	ble.gap().onConnection(connectionCallback);
+    ble.gap().onConnection(connectionCallback);
     ble.gap().onDisconnection(disconnectionCallback);
 
     /* Set up advertising */
@@ -194,7 +209,9 @@ static void bleInitComplete(BLE::InitializationCompleteCallbackContext *params)
     ble.gap().setAdvertisingInterval(1000); /* 1000ms */
     ble.gap().startAdvertising();
 
+#if DFU
     static DFUService   dfu(ble);
+#endif
 }
 
 static void scheduleBleEventsProcessing(BLE::OnEventsToProcessCallbackContext* context)
@@ -211,7 +228,7 @@ static void InitMaxim30102()
     
     ret = maxim_max30102_reset();
     if (ret == false)
-    	vlog(1, "30102 reset failed");
+        vlog(1, "30102 reset failed");
     wait(0.1);
     
     //read and clear status register
@@ -222,7 +239,7 @@ static void InitMaxim30102()
     wait(0.1);
     
     if (ret == false)
-    	vlog(1, "30102 init failed");
+        vlog(1, "30102 init failed");
 
     currentTemperature = readTemp(true);
     vlog(1, "30102 T=%.1fF", currentTemperature);
@@ -319,8 +336,8 @@ void periodicCallback()
 
 int main()
 {
- 	t.start(callback(&eventQueue, &EventQueue::dispatch_forever));
- 	
+    t.start(callback(&eventQueue, &EventQueue::dispatch_forever));
+    
     /*if (gauge.open())
     {
         vlog(1, "Gauge device detected!");
@@ -329,14 +346,14 @@ int main()
         gauge.compensation(MAX17055::RCOMP0);
     }*/
     
-    if (pm.init() == MAX14690_ERROR)
+    /* if (pm.init() == MAX14690_ERROR)
     {
-     	vlog(1, "Error initializing MAX14690");
- 		 led4 = !led4;
-   	}
+        vlog(1, "Error initializing MAX14690");
+         led4 = !led4;
+    } */
 
     BLE &ble = BLE::Instance();
-
+    
     ble.onEventsToProcess(scheduleBleEventsProcessing);
     ble.init(bleInitComplete);
 
@@ -347,8 +364,8 @@ int main()
     
     while (1)
     {
-    	  while (INT.read() == 1);
-    	  UpdateMaxim30102();
+          while (INT.read() == 1);
+          UpdateMaxim30102();
     }
 
     return 0;
