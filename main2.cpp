@@ -30,12 +30,18 @@
 // Define hardware objects here
 
 // Uncomment this if not working with virtual serial port (more stable if this is commented OUT)
-#define DEBUG   1
+// #define DEBUG       1
 
-// DFU.  Must build with mbed-cli on the DFU branch
-#define DFU     1
+// DFU.  Must build with mbed-cli on the DFU branch (feature-nrf5_dfu_s13x_v2)
+// #define USE_DFU     1
 
-#if DFU
+// Power Management in the system
+#define HAS_PM      1
+
+// Power guage
+// #define HAS_GAUGE   1   
+
+#if USE_DFU
 #include "ble/services/DFUService.h"
 #endif
 
@@ -43,18 +49,19 @@
 Serial pc(USBTX, USBRX);
 #endif
 
-DigitalOut  led1(LED1);
-DigitalOut  led2(LED2);
 DigitalOut  led3(LED3);
-DigitalOut  led4(LED4);
 
-InterruptIn INT(P0_26);     // SpO2 interrupt
+InterruptIn INT(P0_20);     // SpO2 interrupt
 
-MAX30205 temp_sensor(P0_27, P0_12, 0x90);
+MAX30205 temp_sensor(P0_17, P0_16, 0x90);
 
-// MAX17055    gauge(P0_27, P0_12);
+#if HAS_GAUGE
+MAX17055    gauge(P0_17, P0_16);
+#endif
 
-// MAX14690 pm(P0_27, P0_12);
+#if HAS_PM
+MAX14690 pm(P0_17, P0_16);
+#endif
 
 static Timer    timer;
 
@@ -130,7 +137,7 @@ static void updateHRMSensorValue()
 {
     if (!hrServicePtr || !connected) return;
 
-     led1 = 1;
+     led3 = 1;
 
     uint16_t hr = (uint16_t) (hr_filter->GetValue() + 0.5);
 
@@ -156,7 +163,7 @@ static void updateTempSensorValue()
 {
     if (!hrServicePtr) return;
 
-     led2 = 1;
+     led3 = 1;
 
     // Unit is in 1/10th of Farenhait
     uint16_t temp = (uint16_t) (currentTemperature * 10 + 0.5);
@@ -209,7 +216,7 @@ static void bleInitComplete(BLE::InitializationCompleteCallbackContext *params)
     ble.gap().setAdvertisingInterval(1000); /* 1000ms */
     ble.gap().startAdvertising();
 
-#if DFU
+#if USE_DFU
     static DFUService   dfu(ble);
 #endif
 }
@@ -227,8 +234,10 @@ static void InitMaxim30102()
     uint8_t uch_dummy;
     
     ret = maxim_max30102_reset();
+
     if (ret == false)
         vlog(1, "30102 reset failed");
+
     wait(0.1);
     
     //read and clear status register
@@ -282,7 +291,7 @@ static void UpdateMaxim30102()
     }
 
     maxim_max30102_read_fifo((aun_red_buffer + buffer_count), (aun_ir_buffer + buffer_count));  //read from MAX30102 FIFO
-    // vlog(2, "time=%d, red=%d, ir=%d", timer.read_ms(), aun_red_buffer[buffer_count], aun_ir_buffer[buffer_count]);
+    vlog(2, "time=%d, red=%d, ir=%d", timer.read_ms(), aun_red_buffer[buffer_count], aun_ir_buffer[buffer_count]);
 
     if (++buffer_count == BUFFER_MAX)
     {
@@ -324,8 +333,10 @@ static void UpdateMaxim30102()
         updateHRMSensorValue();
         updateSPO2SensorValue();
 
+#if HAS_GAUGE
         // Print the current state of charge
-        // vlog(1, "SOC = %f%%", gauge.soc());
+        vlog(1, "SOC = %f%%", gauge.soc());
+#endif
     }
 }
 
@@ -338,19 +349,31 @@ int main()
 {
     t.start(callback(&eventQueue, &EventQueue::dispatch_forever));
     
-    /*if (gauge.open())
+#if HAS_PM
+    pm.ldo3Mode = MAX14690::LDO_ENABLED;
+    pm.ldo2Millivolts = 3200;
+    pm.ldo3Millivolts = 3100;
+    pm.ldo2Mode = MAX14690::LDO_ENABLED;
+    pm.monCfg = MAX14690::MON_HI_Z;
+#endif
+
+#if HAS_GAUGE
+    if (gauge.open())
     {
         vlog(1, "Gauge device detected!");
 
         // Load the default compensation value
         gauge.compensation(MAX17055::RCOMP0);
-    }*/
+    }
+#endif
     
-    /* if (pm.init() == MAX14690_ERROR)
+#if HAS_PM
+    if (pm.init() == MAX14690_ERROR)
     {
         vlog(1, "Error initializing MAX14690");
-         led4 = !led4;
-    } */
+         led3 = 1;
+    }
+#endif
 
     BLE &ble = BLE::Instance();
     
@@ -365,6 +388,7 @@ int main()
     while (1)
     {
           while (INT.read() == 1);
+
           UpdateMaxim30102();
     }
 
